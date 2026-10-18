@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block heading %}Product catalogue{% endblock %}
+{% block content %}
+<div class="split">
+  <section class="panel">
+    <h2>Add product</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Product name
+        <input name="name" required placeholder="e.g. Navy Kurti">
+      </label>
+      <label>SKU
+        <input name="sku" placeholder="e.g. NK-01">
+      </label>
+      <label>Selling price ₹
+        <input name="selling_price" inputmode="decimal" required placeholder="650.00">
+      </label>
+      <label>Unit cost ₹
+        <input name="unit_cost" inputmode="decimal" placeholder="350.00">
+      </label>
+      <label>Packaging / unit ₹
+        <input name="packaging_cost" inputmode="decimal" placeholder="20.00" value="0.00">
+      </label>
+      <label>Stock
+        <input name="stock" type="number" min="0" placeholder="e.g. 25">
+      </label>
+      <label class="full">Description
+        <textarea name="description" rows="2" placeholder="Fabric, fit, care instructions..."></textarea>
+      </label>
+      <button class="primary" type="submit">Add product to catalogue</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-title">
+      <h2>Your products</h2>
+      <form class="search" method="get">
+        <input name="q" value="{{ request.args.q or '' }}" placeholder="Search products...">
+      </form>
+    </div>
+    {% for p in products %}
+      <article class="product">
+        <div>
+          <strong>{{ p.name }}</strong>
+          {% if p.sku %}<small style="color:var(--muted); margin-left:6px;">({{ p.sku }})</small>{% endif %}
+        </div>
+        <span>₹{{ p.selling_price }} · unit cost ₹{{ p.unit_cost or 'missing' }}{% if p.packaging_cost and p.packaging_cost != '0.00' %} · packaging ₹{{ p.packaging_cost }}{% endif %}</span>
+        <form action="{{ url_for('products.delete_product', id=p._id) }}" method="post" onsubmit="return confirm('Delete this product?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="danger link" type="submit">Delete</button>
+        </form>
+      </article>
+    {% else %}
+      <div class="empty">No products yet. Add your first product and unit costs above!</div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

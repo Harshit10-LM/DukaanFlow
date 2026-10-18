@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block heading %}Orders{% endblock %}
+{% block content %}
+<div class="actions">
+  <a class="primary" href="{{ url_for('orders.new_order') }}">New order →</a>
+  <form class="search">
+    <input name="q" value="{{ request.args.q or '' }}" placeholder="Search customer">
+    <select name="status">
+      <option value="">All statuses</option>
+      {% for s in ['Draft', 'Needs confirmation', 'Confirmed', 'Packing', 'Shipped', 'Delivered', 'Cancelled'] %}
+        <option value="{{ s }}" {{ 'selected' if request.args.status == s }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button>Filter</button>
+  </form>
+</div>
+
+<section class="panel">
+  {% if orders %}
+    <table>
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Items</th>
+          <th>Status</th>
+          <th>Order Total</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in orders %}
+          {% set items = o.get('items', []) if o.get('items') is defined else [] %}
+          <tr>
+            <td>
+              <a href="{{ url_for('orders.detail', id=o._id) }}">
+                <strong>{{ o.get('customer_name') or 'Unnamed customer' }}</strong>
+              </a>
+              {% if o.get('customer_contact') %}
+                <div style="font-size:12px; color:var(--muted);">{{ o.customer_contact }}</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if items %}
+                <div>
+                  {{ items[0].get('name', 'Item') }}
+                  {% if items[0].get('variant') %}<span style="color:var(--muted);">({{ items[0].variant }})</span>{% endif %}
+                  {% if items|length > 1 %}
+                    <span class="pill" style="font-size:11px; padding:2px 6px;">+{{ items|length - 1 }} more</span>
+                  {% endif %}
+                </div>
+              {% else %}
+                <span style="color:var(--muted);">No items</span>
+              {% endif %}
+            </td>
+            <td><span class="pill">{{ o.get('status', 'Draft') }}</span></td>
+            <td><strong>₹{{ o.get('calculation', {}).get('subtotal', '0.00') }}</strong></td>
+            <td><a href="{{ url_for('orders.detail', id=o._id) }}">View →</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty">No matching orders found. Capture your first order from WhatsApp or Instagram!</div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,361 @@
+{% extends 'base.html' %}
+{% block heading %}Capture a new order{% endblock %}
+{% block content %}
+{% set extracted_items = extraction['items'] if extraction and 'items' in extraction and extraction['items'] else (order.get('items') if order and order.get('items') else []) %}
+<section class="capture">
+  <div class="panel">
+    <h2>Customer message</h2>
+    <p>Paste a WhatsApp or DM conversation. Gemma extracts facts only without inventing details.</p>
+    <form action="{{ url_for('orders.extract') }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="is_extract_action" value="1">
+      <textarea name="original_message" rows="8" placeholder="Hi, I need two navy kurtis, one medium and one large. The price is ₹650 each, right? Can you deliver by Friday? I'll pay half now and the rest on delivery.">{{ order.get('original_message', '') }}</textarea>
+      <button class="primary" type="submit">✦ Extract order with Gemma</button>
+    </form>
+
+    {% if extraction %}
+      <aside class="insight">
+        <strong>Extraction review</strong>
+        {% if extraction.get('missing_fields') %}
+          <p><strong>Missing details:</strong> {{ extraction['missing_fields'] | join(', ') }}</p>
+        {% endif %}
+        {% if extraction.get('ambiguous_fields') %}
+          <p><strong>Ambiguous details:</strong> {{ extraction['ambiguous_fields'] | join(', ') }}</p>
+        {% endif %}
+        {% if extraction.get('clarification_questions') %}
+          <p><strong>Clarifications to ask:</strong></p>
+          <ul>
+            {% for q in extraction['clarification_questions'] %}
+              <li>{{ q }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if not extraction.get('missing_fields') and not extraction.get('ambiguous_fields') %}
+          <p>All core fields detected. Please verify catalogue costs and pricing before confirming.</p>
+        {% endif %}
+      </aside>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Review & save order</h2>
+    <form action="{{ url_for('orders.new_order') }}" method="post" id="order-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="submission_token" value="{{ submission_token }}">
+      <input type="hidden" name="original_message" value="{{ order.get('original_message', '') }}">
+
+      <div class="form-grid">
+        <label>Customer name
+          <input name="customer_name" value="{{ order.get('customer_name', '') or (extraction['customer_name'] if extraction else '') }}" placeholder="e.g. Asha Verma">
+        </label>
+        <label>Phone / contact
+          <input name="customer_contact" value="{{ order.get('customer_contact', '') or (extraction['customer_contact'] if extraction else '') }}" placeholder="e.g. +91 98765 43210">
+        </label>
+        <label>Requested delivery date
+          <input name="delivery_date" value="{{ order.get('delivery_date', '') or order.get('delivery_request_text', '') or (extraction['delivery_request_text'] if extraction else '') }}" placeholder="e.g. by Friday, 24 Oct">
+        </label>
+        <label>Status
+          <select name="status">
+            <option value="Draft" {{ 'selected' if order.get('status') == 'Draft' }}>Draft</option>
+            <option value="Needs confirmation" {{ 'selected' if order.get('status') == 'Needs confirmation' }}>Needs confirmation</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="line-items-section">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0;">Order line items</h3>
+          <button type="button" class="button" id="btn-add-item" style="font-size:12px; padding:6px 12px;">+ Add line item</button>
+        </div>
+
+        <div id="line-items-container">
+          {% if extracted_items %}
+            {% for it in extracted_items %}
+              <div class="line-item-card" data-index="{{ loop.index0 }}">
+                <div class="line-item-header">
+                  <div class="line-item-title">
+                    <span>Line {{ loop.index }}</span>
+                    {% if it.get('price_mismatch') %}
+                      <span class="badge-mismatch">Price mismatch: Quoted ₹{{ it.get('quoted_unit_price') }} vs Catalogue ₹{{ it.get('catalogue_selling_price') }}</span>
+                    {% elif it.get('matched_product_name') %}
+                      <span class="badge-match">Catalogue matched: {{ it.get('matched_product_name') }}</span>
+                    {% elif it.get('product_name') or it.get('name') %}
+                      <span class="badge-match">Line item verified</span>
+                    {% else %}
+                      <span class="badge-mismatch">Unmatched catalogue item</span>
+                    {% endif %}
+                  </div>
+                  <button type="button" class="btn-remove-line" onclick="removeLineItem(this)">Remove</button>
+                </div>
+
+                <div class="line-grid">
+                  <label>Product / Item
+                    <input name="item_name" class="item-name" required value="{{ it.get('product_name') or it.get('name') or '' }}" placeholder="Product name" list="products-datalist" onchange="autoFillFromCatalogue(this)">
+                  </label>
+                  <label>Variant / Size
+                    <input name="variant" class="item-variant" value="{{ it.get('variant') or '' }}" placeholder="e.g. M, L, Blue">
+                  </label>
+                  <label>Qty
+                    <input name="quantity" class="item-qty" type="number" min="1" value="{{ it.get('quantity') or 1 }}" required oninput="recalcTotals()">
+                  </label>
+                  <label>Verified price ₹
+                    <input name="selling_price" class="item-price" required inputmode="decimal" value="{{ it.get('catalogue_selling_price') or it.get('quoted_unit_price') or it.get('selling_price') or '' }}" placeholder="0.00" oninput="recalcTotals()">
+                  </label>
+                  <label>Unit cost ₹
+                    <input name="unit_cost" class="item-cost" inputmode="decimal" value="{{ it.get('unit_cost') or '' }}" placeholder="0.00" oninput="recalcTotals()">
+                  </label>
+                  <label>Packaging ₹
+                    <input name="packaging_cost" class="item-pkg" inputmode="decimal" value="{{ it.get('packaging_cost') or '0.00' }}" placeholder="0.00" oninput="recalcTotals()">
+                  </label>
+                </div>
+                <input type="hidden" name="quoted_price" value="{{ it.get('quoted_unit_price') or it.get('quoted_price') or '' }}">
+                <input type="hidden" name="product_id" value="{{ it.get('matched_product_id') or it.get('product_id') or '' }}">
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="line-item-card" data-index="0">
+              <div class="line-item-header">
+                <div class="line-item-title">
+                  <span>Line 1</span>
+                </div>
+                <button type="button" class="btn-remove-line" onclick="removeLineItem(this)">Remove</button>
+              </div>
+
+              <div class="line-grid">
+                <label>Product / Item
+                  <input name="item_name" class="item-name" required value="" placeholder="Product name" list="products-datalist" onchange="autoFillFromCatalogue(this)">
+                </label>
+                <label>Variant / Size
+                  <input name="variant" class="item-variant" value="" placeholder="e.g. M, L">
+                </label>
+                <label>Qty
+                  <input name="quantity" class="item-qty" type="number" min="1" value="1" required oninput="recalcTotals()">
+                </label>
+                <label>Verified price ₹
+                  <input name="selling_price" class="item-price" required inputmode="decimal" value="" placeholder="0.00" oninput="recalcTotals()">
+                </label>
+                <label>Unit cost ₹
+                  <input name="unit_cost" class="item-cost" inputmode="decimal" value="" placeholder="0.00" oninput="recalcTotals()">
+                </label>
+                <label>Packaging ₹
+                  <input name="packaging_cost" class="item-pkg" inputmode="decimal" value="0.00" placeholder="0.00" oninput="recalcTotals()">
+                </label>
+              </div>
+              <input type="hidden" name="quoted_price" value="">
+              <input type="hidden" name="product_id" value="">
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <datalist id="products-datalist">
+        {% for p in products %}
+          <option value="{{ p.name }}" data-price="{{ p.selling_price }}" data-cost="{{ p.unit_cost }}" data-pkg="{{ p.packaging_cost }}" data-id="{{ p._id }}" data-stock="{{ p.stock or '' }}">{{ p.name }} (₹{{ p.selling_price }})</option>
+        {% endfor %}
+      </datalist>
+
+      <div class="totals-summary">
+        <dl>
+          <dt>Subtotal (Revenue)</dt>
+          <dd id="summary-subtotal">₹0.00</dd>
+          <dt>Total Product Cost</dt>
+          <dd id="summary-product-cost">₹0.00</dd>
+          <dt>Total Packaging Cost</dt>
+          <dd id="summary-pkg-cost">₹0.00</dd>
+          <dt>Other Costs</dt>
+          <dd id="summary-other-cost">₹0.00</dd>
+          <div class="grand-total" style="display:contents;">
+            <dt>Estimated Profit</dt>
+            <dd id="summary-profit" class="profit-row">₹0.00</dd>
+            <dt>Estimated Margin</dt>
+            <dd id="summary-margin">0.00%</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="form-grid">
+        <label>Other costs ₹
+          <input name="other_cost" id="other-cost-input" value="{{ order.get('other_cost', '0.00') }}" inputmode="decimal" oninput="recalcTotals()">
+        </label>
+        <label class="full">Delivery address
+          <textarea name="delivery_address" rows="2" placeholder="Street, landmark, city, pincode">{{ order.get('delivery_address', '') or (extraction['delivery_address'] if extraction else '') }}</textarea>
+        </label>
+        <label class="full">Payment terms
+          <textarea name="payment_terms" rows="2" placeholder="e.g. 50% advance via UPI, balance on delivery">{{ order.get('payment_terms', '') or (extraction['payment_terms'] if extraction else '') }}</textarea>
+        </label>
+        <label class="full">Seller-approved reply draft
+          <textarea name="reply_draft" rows="3" placeholder="Draft reply message to send to the customer">{{ order.get('reply_draft', '') or (extraction['customer_reply_draft'] if extraction else '') }}</textarea>
+        </label>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="primary" type="submit" id="btn-save-order">Save order for review</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<script id="catalogue-data" type="application/json">
+[
+  {% for p in products %}
+    {
+      "id": "{{ p._id }}",
+      "name": {{ p.name | tojson }},
+      "price": "{{ p.selling_price }}",
+      "cost": "{{ p.unit_cost or '' }}",
+      "pkg": "{{ p.packaging_cost or '0.00' }}",
+      "stock": "{{ p.stock or '' }}"
+    }{% if not loop.last %},{% endif %}
+  {% endfor %}
+]
+</script>
+<script>
+const catalogueData = JSON.parse(document.getElementById('catalogue-data')?.textContent || '[]');
+
+function autoFillFromCatalogue(inputEl) {
+  const val = inputEl.value.trim().toLowerCase();
+  const card = inputEl.closest('.line-item-card');
+  const match = catalogueData.find(p => p.name.toLowerCase() === val || val.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(val));
+  if (match) {
+    const priceInput = card.querySelector('.item-price');
+    const costInput = card.querySelector('.item-cost');
+    const pkgInput = card.querySelector('.item-pkg');
+    const idInput = card.querySelector('input[name="product_id"]');
+
+    if (!priceInput.value || priceInput.value === '0.00') {
+      priceInput.value = match.price;
+    }
+    costInput.value = match.cost;
+    pkgInput.value = match.pkg;
+    idInput.value = match.id;
+  }
+  recalcTotals();
+}
+
+function removeLineItem(btn) {
+  const container = document.getElementById('line-items-container');
+  const cards = container.querySelectorAll('.line-item-card');
+  if (cards.length > 1) {
+    btn.closest('.line-item-card').remove();
+    renumberCards();
+    recalcTotals();
+  } else {
+    alert('At least one line item is required.');
+  }
+}
+
+function renumberCards() {
+  const cards = document.querySelectorAll('.line-item-card');
+  cards.forEach((card, idx) => {
+    const titleSpan = card.querySelector('.line-item-title span');
+    if (titleSpan) titleSpan.textContent = `Line ${idx + 1}`;
+  });
+}
+
+document.getElementById('btn-add-item').addEventListener('click', function() {
+  const container = document.getElementById('line-items-container');
+  const count = container.querySelectorAll('.line-item-card').length;
+  const newCard = document.createElement('div');
+  newCard.className = 'line-item-card';
+  newCard.setAttribute('data-index', count);
+  newCard.innerHTML = `
+    <div class="line-item-header">
+      <div class="line-item-title">
+        <span>Line ${count + 1}</span>
+      </div>
+      <button type="button" class="btn-remove-line" onclick="removeLineItem(this)">Remove</button>
+    </div>
+    <div class="line-grid">
+      <label>Product / Item
+        <input name="item_name" class="item-name" required placeholder="Product name" list="products-datalist" onchange="autoFillFromCatalogue(this)">
+      </label>
+      <label>Variant / Size
+        <input name="variant" class="item-variant" placeholder="e.g. M, L">
+      </label>
+      <label>Qty
+        <input name="quantity" class="item-qty" type="number" min="1" value="1" required oninput="recalcTotals()">
+      </label>
+      <label>Verified price ₹
+        <input name="selling_price" class="item-price" required inputmode="decimal" placeholder="0.00" oninput="recalcTotals()">
+      </label>
+      <label>Unit cost ₹
+        <input name="unit_cost" class="item-cost" inputmode="decimal" placeholder="0.00" oninput="recalcTotals()">
+      </label>
+      <label>Packaging ₹
+        <input name="packaging_cost" class="item-pkg" inputmode="decimal" value="0.00" placeholder="0.00" oninput="recalcTotals()">
+      </label>
+    </div>
+    <input type="hidden" name="quoted_price" value="">
+    <input type="hidden" name="product_id" value="">
+  `;
+  container.appendChild(newCard);
+  recalcTotals();
+});
+
+function recalcTotals() {
+  let subtotal = 0;
+  let totalCost = 0;
+  let totalPkg = 0;
+  let missingCost = false;
+
+  const cards = document.querySelectorAll('.line-item-card');
+  cards.forEach(card => {
+    const qty = parseFloat(card.querySelector('.item-qty')?.value) || 1;
+    const price = parseFloat(card.querySelector('.item-price')?.value) || 0;
+    const costVal = card.querySelector('.item-cost')?.value;
+    const pkg = parseFloat(card.querySelector('.item-pkg')?.value) || 0;
+
+    subtotal += qty * price;
+    totalPkg += qty * pkg;
+
+    if (costVal === undefined || costVal.trim() === '') {
+      missingCost = true;
+    } else {
+      totalCost += qty * (parseFloat(costVal) || 0);
+    }
+  });
+
+  const other = parseFloat(document.getElementById('other-cost-input')?.value) || 0;
+
+  document.getElementById('summary-subtotal').textContent = `₹${subtotal.toFixed(2)}`;
+  document.getElementById('summary-other-cost').textContent = `₹${other.toFixed(2)}`;
+
+  if (missingCost) {
+    document.getElementById('summary-product-cost').textContent = 'Incomplete';
+    document.getElementById('summary-pkg-cost').textContent = `₹${totalPkg.toFixed(2)}`;
+    document.getElementById('summary-profit').textContent = 'Complete costs first';
+    document.getElementById('summary-margin').textContent = '—';
+  } else {
+    const profit = subtotal - totalCost - totalPkg - other;
+    const margin = subtotal > 0 ? (profit / subtotal * 100) : 0;
+    document.getElementById('summary-product-cost').textContent = `₹${totalCost.toFixed(2)}`;
+    document.getElementById('summary-pkg-cost').textContent = `₹${totalPkg.toFixed(2)}`;
+    document.getElementById('summary-profit').textContent = `₹${profit.toFixed(2)}`;
+    document.getElementById('summary-margin').textContent = `${margin.toFixed(2)}%`;
+  }
+}
+
+// Form submit protection against duplicate submissions and UI loading state
+(function() {
+  const form = document.getElementById('order-form');
+  if (form) {
+    form.addEventListener('submit', function() {
+      const btn = document.getElementById('btn-save-order');
+      if (btn) {
+        setTimeout(function() {
+          btn.disabled = true;
+          btn.textContent = 'Saving order...';
+        }, 0);
+        setTimeout(function() {
+          btn.disabled = false;
+          btn.textContent = 'Save order for review';
+        }, 8000);
+      }
+    });
+  }
+})();
+
+// Initial calculation on load
+window.addEventListener('DOMContentLoaded', recalcTotals);
+</script>
+{% endblock %}

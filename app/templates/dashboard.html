@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+{% block heading %}Dashboard{% endblock %}
+{% block content %}
+<div class="actions">
+  <a class="primary" href="{{ url_for('orders.new_order') }}">✦ Create an order</a>
+  <a class="button" href="{{ url_for('products.index') }}">Add a product</a>
+</div>
+
+<section class="metrics">
+  <article>
+    <small>Total orders</small>
+    <strong>{{ stats.total }}</strong>
+  </article>
+  <article>
+    <small>Awaiting review</small>
+    <strong>{{ stats.awaiting }}</strong>
+  </article>
+  <article>
+    <small>In fulfilment</small>
+    <strong>{{ stats.active }}</strong>
+  </article>
+  <article>
+    <small>Confirmed revenue</small>
+    <strong>₹{{ '{:,.2f}'.format(stats.revenue) }}</strong>
+  </article>
+  <article>
+    <small>Estimated profit</small>
+    <strong>₹{{ '{:,.2f}'.format(stats.profit) }}</strong>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-title">
+    <h2>Recent orders</h2>
+    <a href="{{ url_for('orders.list_orders') }}">View all orders →</a>
+  </div>
+  {% if orders %}
+    <table>
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Items</th>
+          <th>Status</th>
+          <th>Total Value</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in orders %}
+          {% set items = o.get('items', []) if o.get('items') is defined else [] %}
+          <tr>
+            <td>
+              <a href="{{ url_for('orders.detail', id=o._id) }}">
+                <strong>{{ o.get('customer_name') or 'Unnamed customer' }}</strong>
+              </a>
+            </td>
+            <td>
+              {% if items %}
+                {{ items[0].get('name', 'Item') }}{% if items|length > 1 %} <span class="pill" style="font-size:11px;">+{{ items|length - 1 }}</span>{% endif %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td><span class="pill">{{ o.get('status', 'Draft') }}</span></td>
+            <td><strong>₹{{ o.get('calculation', {}).get('subtotal') or '0.00' }}</strong></td>
+            <td><a href="{{ url_for('orders.detail', id=o._id) }}">Review →</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty">No orders recorded yet. Capture your first WhatsApp or Instagram DM order!</div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block heading %}Integrations & health{% endblock %}
+{% block content %}
+<section class="panel settings">
+  <article>
+    <span class="dot {{ 'on' if 'connected' in db }}"></span>
+    <div>
+      <h2>MongoDB Atlas</h2>
+      <p>{{ db }}{% if 'demo' in db %}; clearly labelled in-memory fallback only (data resets on restart){% endif %}</p>
+    </div>
+  </article>
+
+  <article>
+    <span class="dot {{ 'on' if gemma }}"></span>
+    <div>
+      <h2>Gemma open-weight AI inference</h2>
+      <p>{{ 'API key is configured. Extraction is executed on demand with prompt grounding.' if gemma else 'Not configured. Manual order creation remains fully operational.' }}</p>
+    </div>
+  </article>
+
+  <article>
+    <span class="dot {{ 'on' if voice }}"></span>
+    <div>
+      <h2>ElevenLabs Speak & Share</h2>
+      <p>{{ 'Credentials configured. Voice audio is generated server-side for seller-approved reply drafts.' if voice else 'Not configured. Order management functions normally without audio generation.' }}</p>
+    </div>
+  </article>
+
+  <article>
+    <span class="dot on"></span>
+    <div>
+      <h2>Application environment</h2>
+      <p>{{ env }} · <a href="/health" target="_blank">Service health check</a></p>
+    </div>
+  </article>
+</section>
+{% endblock %}

@@ -1,0 +1,380 @@
+{% extends 'base.html' %}
+{% block heading %}Order review — #{{ order._id }}{% endblock %}
+
+{% block content %}
+<div class="actions">
+  <a class="button" href="{{ url_for('orders.invoice', id=order._id) }}" target="_blank">Print summary & invoice</a>
+  <a class="button" href="{{ url_for('orders.list_orders') }}">← Back to orders</a>
+</div>
+
+<section class="capture">
+  <div class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:start;">
+      <div>
+        <h2 style="margin-bottom:4px;">{{ order.get('customer_name') or 'Unnamed customer' }}</h2>
+        <p style="color:var(--muted); margin:0;">
+          {{ order.get('customer_contact') or 'No phone number' }}
+          {% if order.get('delivery_address') %}<br>{{ order.get('delivery_address') }}{% endif %}
+          {% if order.get('delivery_date') %}<br><strong>Requested delivery:</strong> {{ order.get('delivery_date') }}{% endif %}
+        </p>
+      </div>
+      <span class="pill">{{ order.get('status', 'Draft') }}</span>
+    </div>
+
+    {% if order.get('original_message') %}
+      <p class="hint" style="margin-top:14px; background:#f5f8f6; padding:10px; border-radius:6px;">
+        <strong>Customer message:</strong><br>{{ order['original_message'] }}
+      </p>
+    {% endif %}
+
+    {% if order.get('payment_terms') %}
+      <p class="hint"><strong>Payment terms:</strong> {{ order.get('payment_terms') }}</p>
+    {% endif %}
+
+    <h3>Items in order</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Variant</th>
+          <th>Qty</th>
+          <th>Price</th>
+          <th>Line Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in order.get('items', []) %}
+          <tr>
+            <td><strong>{{ it.get('name') or 'Item' }}</strong></td>
+            <td>{{ it.get('variant') or '—' }}</td>
+            <td>{{ it.get('quantity', 1) }}</td>
+            <td>₹{{ it.get('selling_price', '0.00') }}</td>
+            <td><strong>₹{{ it.get('line_subtotal') or '%.2f'|format((it.get('quantity', 1)|int) * (it.get('selling_price', '0')|float)) }}</strong></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:24px;">Financial calculation</h3>
+    <dl>
+      <dt>Subtotal (Revenue)</dt>
+      <dd>₹{{ order.get('calculation', {}).get('subtotal', '0.00') }}</dd>
+      <dt>Product Cost</dt>
+      <dd>{{ '₹' + order['calculation']['product_cost'] if order.get('calculation', {}).get('product_cost') else 'Missing cost data' }}</dd>
+      <dt>Packaging Cost</dt>
+      <dd>{{ '₹' + order['calculation']['packaging_cost'] if order.get('calculation', {}).get('packaging_cost') else 'Missing cost data' }}</dd>
+      <dt>Other Costs</dt>
+      <dd>₹{{ order.get('calculation', {}).get('other_cost', '0.00') }}</dd>
+      <dt style="font-weight:700;">Estimated Profit</dt>
+      <dd style="font-weight:700; color:var(--accent);">
+        {{ '₹' + order['calculation']['estimated_profit'] if order.get('calculation', {}).get('estimated_profit') else 'Complete costs first' }}
+      </dd>
+      <dt>Estimated Margin</dt>
+      <dd>{{ order['calculation']['margin'] + '%' if order.get('calculation', {}).get('margin') else '—' }}</dd>
+    </dl>
+    <p class="hint">Deterministic Decimal calculation. Excludes taxes and unentered overheads.</p>
+
+    <div class="audio-card" id="voice-card">
+      <h4 style="margin:0 0 8px 0;">🔊 Customer reply audio</h4>
+      <p class="hint" style="margin:0 0 10px 0;">Edit the reply below, then generate speech. Generating audio does <strong>not</strong> save or confirm the order.</p>
+
+      <label style="font-size:13px; font-weight:600; display:grid; gap:5px; margin-bottom:12px;">
+        Reply text to speak
+        <textarea id="speak-text" rows="3" maxlength="5000" style="resize:vertical;">{{ order.get('reply_draft', '') }}</textarea>
+        <span class="hint" id="speak-char-count" style="text-align:right;"></span>
+      </label>
+
+      <div class="audio-controls">
+        <button class="primary" type="button" id="btn-speak" style="font-size:13px; padding:8px 14px;">
+          ✦ Generate voice note
+        </button>
+        <span id="speak-status" class="hint" style="display:none; margin-left:8px;"></span>
+      </div>
+
+      <div id="audio-result" style="display:none; margin-top:14px;">
+        <audio id="audio-player" controls style="width:100%; margin-bottom:8px;"></audio>
+        <a id="audio-download" href="#" download="dukaanflow-reply.mp3" class="button" style="font-size:12px; padding:6px 12px;">
+          ⬇ Download MP3
+        </a>
+      </div>
+
+      <div id="speak-error" class="flash error" style="display:none; margin-top:10px;"></div>
+    </div>
+
+  </div>
+
+  <div class="panel">
+    <h2>Edit order & line items</h2>
+    <form method="post" id="edit-order-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="original_message" value="{{ order.get('original_message', '') }}">
+
+      <div class="form-grid">
+        <label>Customer name
+          <input name="customer_name" value="{{ order.get('customer_name', '') }}">
+        </label>
+        <label>Contact
+          <input name="customer_contact" value="{{ order.get('customer_contact', '') }}">
+        </label>
+      </div>
+
+      <div class="line-items-section">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0;">Line items</h3>
+          <button type="button" class="button" id="btn-add-edit-item" style="font-size:12px; padding:6px 12px;">+ Add line item</button>
+        </div>
+
+        <div id="edit-items-container">
+          {% for it in order.get('items', []) %}
+            <div class="line-item-card" data-index="{{ loop.index0 }}">
+              <div class="line-item-header">
+                <div class="line-item-title">
+                  <span>Line {{ loop.index }}</span>
+                </div>
+                <button type="button" class="btn-remove-line" onclick="removeEditLineItem(this)">Remove</button>
+              </div>
+
+              <div class="line-grid">
+                <label>Product / Item
+                  <input name="item_name" class="item-name" required value="{{ it.get('name', '') }}" placeholder="Product name" list="products-datalist" onchange="autoFillEdit(this)">
+                </label>
+                <label>Variant / Size
+                  <input name="variant" class="item-variant" value="{{ it.get('variant', '') }}" placeholder="e.g. M, L">
+                </label>
+                <label>Qty
+                  <input name="quantity" class="item-qty" type="number" min="1" value="{{ it.get('quantity', 1) }}" required>
+                </label>
+                <label>Selling price ₹
+                  <input name="selling_price" class="item-price" required inputmode="decimal" value="{{ it.get('selling_price', '') }}">
+                </label>
+                <label>Unit cost ₹
+                  <input name="unit_cost" class="item-cost" inputmode="decimal" value="{{ it.get('unit_cost', '') }}">
+                </label>
+                <label>Packaging ₹
+                  <input name="packaging_cost" class="item-pkg" inputmode="decimal" value="{{ it.get('packaging_cost', '0.00') }}">
+                </label>
+              </div>
+              <input type="hidden" name="product_id" value="{{ it.get('product_id', '') }}">
+              <input type="hidden" name="quoted_price" value="{{ it.get('quoted_price', '') }}">
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <datalist id="products-datalist">
+        {% for p in products %}
+          <option value="{{ p.name }}" data-price="{{ p.selling_price }}" data-cost="{{ p.unit_cost }}" data-pkg="{{ p.packaging_cost }}" data-id="{{ p._id }}">{{ p.name }} (₹{{ p.selling_price }})</option>
+        {% endfor %}
+      </datalist>
+
+      <div class="form-grid">
+        <label>Other costs ₹
+          <input name="other_cost" value="{{ order.get('other_cost', '0.00') }}" inputmode="decimal">
+        </label>
+        <label>Status
+          <select name="status">
+            {% for s in ['Draft', 'Needs confirmation', 'Confirmed', 'Packing', 'Shipped', 'Delivered', 'Cancelled'] %}
+              <option value="{{ s }}" {{ 'selected' if order.get('status') == s }}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Requested delivery date
+          <input name="delivery_date" value="{{ order.get('delivery_date', '') or order.get('delivery_request_text', '') }}" placeholder="e.g. by Friday, 24 Oct">
+        </label>
+        <label class="full">Delivery address
+          <textarea name="delivery_address" rows="2">{{ order.get('delivery_address', '') }}</textarea>
+        </label>
+        <label class="full">Payment terms
+          <textarea name="payment_terms" rows="2">{{ order.get('payment_terms', '') }}</textarea>
+        </label>
+        <label class="full">Approved reply draft
+          <textarea name="reply_draft" rows="3">{{ order.get('reply_draft', '') }}</textarea>
+        </label>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="primary" type="submit">Save changes & recalculate</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<script id="catalogue-data" type="application/json">
+[
+  {% for p in products %}
+    {
+      "id": "{{ p._id }}",
+      "name": {{ p.name | tojson }},
+      "price": "{{ p.selling_price }}",
+      "cost": "{{ p.unit_cost or '' }}",
+      "pkg": "{{ p.packaging_cost or '0.00' }}"
+    }{% if not loop.last %},{% endif %}
+  {% endfor %}
+]
+</script>
+<script>
+const catalogueData = JSON.parse(document.getElementById('catalogue-data')?.textContent || '[]');
+
+function autoFillEdit(inputEl) {
+  const val = inputEl.value.trim().toLowerCase();
+  const card = inputEl.closest('.line-item-card');
+  const match = catalogueData.find(p => p.name.toLowerCase() === val || val.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(val));
+  if (match) {
+    const priceInput = card.querySelector('.item-price');
+    const costInput = card.querySelector('.item-cost');
+    const pkgInput = card.querySelector('.item-pkg');
+    const idInput = card.querySelector('input[name="product_id"]');
+
+    if (!priceInput.value || priceInput.value === '0.00') {
+      priceInput.value = match.price;
+    }
+    costInput.value = match.cost;
+    pkgInput.value = match.pkg;
+    idInput.value = match.id;
+  }
+}
+
+function removeEditLineItem(btn) {
+  const container = document.getElementById('edit-items-container');
+  const cards = container.querySelectorAll('.line-item-card');
+  if (cards.length > 1) {
+    btn.closest('.line-item-card').remove();
+    renumberEditCards();
+  } else {
+    alert('At least one line item is required.');
+  }
+}
+
+function renumberEditCards() {
+  const cards = document.querySelectorAll('#edit-items-container .line-item-card');
+  cards.forEach((card, idx) => {
+    const titleSpan = card.querySelector('.line-item-title span');
+    if (titleSpan) titleSpan.textContent = `Line ${idx + 1}`;
+  });
+}
+
+document.getElementById('btn-add-edit-item').addEventListener('click', function() {
+  const container = document.getElementById('edit-items-container');
+  const count = container.querySelectorAll('.line-item-card').length;
+  const newCard = document.createElement('div');
+  newCard.className = 'line-item-card';
+  newCard.setAttribute('data-index', count);
+  newCard.innerHTML = `
+    <div class="line-item-header">
+      <div class="line-item-title">
+        <span>Line ${count + 1}</span>
+      </div>
+      <button type="button" class="btn-remove-line" onclick="removeEditLineItem(this)">Remove</button>
+    </div>
+    <div class="line-grid">
+      <label>Product / Item
+        <input name="item_name" class="item-name" required placeholder="Product name" list="products-datalist" onchange="autoFillEdit(this)">
+      </label>
+      <label>Variant / Size
+        <input name="variant" class="item-variant" placeholder="e.g. M, L">
+      </label>
+      <label>Qty
+        <input name="quantity" class="item-qty" type="number" min="1" value="1" required>
+      </label>
+      <label>Selling price ₹
+        <input name="selling_price" class="item-price" required inputmode="decimal" placeholder="0.00">
+      </label>
+      <label>Unit cost ₹
+        <input name="unit_cost" class="item-cost" inputmode="decimal" placeholder="0.00">
+      </label>
+      <label>Packaging ₹
+        <input name="packaging_cost" class="item-pkg" inputmode="decimal" value="0.00" placeholder="0.00">
+      </label>
+    </div>
+    <input type="hidden" name="product_id" value="">
+    <input type="hidden" name="quoted_price" value="">
+  `;
+  container.appendChild(newCard);
+});
+
+// ── Voice / Speak UI ────────────────────────────────────────────────────────
+(function () {
+  const speakText   = document.getElementById('speak-text');
+  const charCount   = document.getElementById('speak-char-count');
+  const btnSpeak    = document.getElementById('btn-speak');
+  const speakStatus = document.getElementById('speak-status');
+  const audioResult = document.getElementById('audio-result');
+  const audioPlayer = document.getElementById('audio-player');
+  const audioDownload = document.getElementById('audio-download');
+  const speakError  = document.getElementById('speak-error');
+
+  function updateCharCount() {
+    const len = speakText.value.length;
+    charCount.textContent = `${len} / 5000 characters`;
+    charCount.style.color = len > 4800 ? 'var(--danger)' : 'var(--muted)';
+  }
+  if (speakText) {
+    speakText.addEventListener('input', updateCharCount);
+    updateCharCount();
+  }
+
+  function setLoading(loading) {
+    btnSpeak.disabled = loading;
+    btnSpeak.textContent = loading ? '⏳ Generating…' : '✦ Generate voice note';
+    speakStatus.style.display = loading ? 'inline' : 'none';
+    speakStatus.textContent = loading ? 'Calling ElevenLabs…' : '';
+  }
+
+  function showError(msg) {
+    speakError.textContent = msg;
+    speakError.style.display = 'block';
+    audioResult.style.display = 'none';
+  }
+
+  function showAudio(audioUrl, downloadUrl) {
+    speakError.style.display = 'none';
+    audioPlayer.src = audioUrl;
+    audioDownload.href = downloadUrl;
+    audioResult.style.display = 'block';
+    audioPlayer.play().catch(() => {});  // auto-play; browsers may block, that's fine
+  }
+
+  if (btnSpeak) {
+    btnSpeak.addEventListener('click', async function () {
+      const text = speakText ? speakText.value.trim() : '';
+      if (!text) {
+        showError('Please enter a reply before generating audio.');
+        return;
+      }
+      if (text.length > 5000) {
+        showError('Reply text is too long (max 5 000 characters).');
+        return;
+      }
+
+      setLoading(true);
+      speakError.style.display = 'none';
+
+      const csrfInput = document.querySelector('input[name="csrf_token"]');
+      const csrf = csrfInput ? csrfInput.value : '';
+
+      const formData = new FormData();
+      formData.append('reply_text', text);
+      formData.append('csrf_token', csrf);
+
+      try {
+        const resp = await fetch('{{ url_for("orders.speak", id=order._id) }}', {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          body: formData,
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showError(data.error || `Error ${resp.status} — please try again.`);
+        } else {
+          showAudio(data.audio_url, data.download_url);
+        }
+      } catch (err) {
+        showError('Network error — could not reach the server. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}
